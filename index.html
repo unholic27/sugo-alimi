@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>슈고알리미(웹)</title>
+  <style>
+    body { font-family: "Malgun Gothic", system-ui, sans-serif; margin: 20px; }
+    body.dark { background:#1c1c1e; color:#fff; }
+    .row { display:flex; gap:16px; align-items:center; margin-bottom:12px; }
+    .btn { padding:8px 12px; cursor:pointer; }
+    .toast-wrap {
+      position: fixed; right: 12px; bottom: 12px; width: 320px; z-index: 9999;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .toast {
+      border: 1px solid rgba(0,0,0,.15);
+      background: #fff; color:#111;
+      border-radius: 10px;
+      padding: 12px 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.12);
+      cursor: pointer;
+      user-select: none;
+    }
+    body.dark .toast {
+      background:#1c1c1e; color:#fff;
+      border-color: rgba(255,255,255,.15);
+    }
+    .toast .title { font-weight: 800; font-size: 14px; margin-bottom: 6px; }
+    .toast .msg { font-size: 13px; opacity: .9; }
+    .hint { opacity:.7; font-size: 12px; }
+  </style>
+</head>
+
+<body>
+  <h2>슈고알리미(웹, 탭 켜짐 전제)</h2>
+
+  <div class="row">
+    <label>
+      <input type="checkbox" id="chkEnabled">
+      알림 사용
+    </label>
+
+    <label>
+      <input type="checkbox" id="chkDark">
+      다크모드
+    </label>
+
+    <button class="btn" id="btnPerm">알림 권한 요청</button>
+    <button class="btn" id="btnTest">테스트 팝업</button>
+  </div>
+
+  <div class="hint">
+    - 15:00 / 45:00 : 기존 알림<br>
+    - 21:20 / 50:00 : 종료알림(토스트 60초 유지)<br>
+    - 브라우저 알림은 표시 시간이 OS/브라우저 정책이라 “60초 유지” 보장은 어려워서, 화면 토스트로 60초 유지합니다.
+  </div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+(() => {
+  const KEY_ENABLED = "sugo_enabled";
+  const KEY_DARK    = "sugo_dark";
+  const KEY_LAST    = "sugo_last_key";
+
+  const $enabled = document.getElementById("chkEnabled");
+  const $dark    = document.getElementById("chkDark");
+  const $toastWrap = document.getElementById("toastWrap");
+
+  // load state
+  const enabled0 = localStorage.getItem(KEY_ENABLED);
+  $enabled.checked = (enabled0 === null) ? true : (enabled0 === "1");
+
+  const dark0 = localStorage.getItem(KEY_DARK);
+  $dark.checked = (dark0 === "1");
+  applyDark($dark.checked);
+
+  $enabled.addEventListener("change", () => {
+    localStorage.setItem(KEY_ENABLED, $enabled.checked ? "1" : "0");
+    showToast("슈고알리미", $enabled.checked ? "알림 사용 중" : "알림 해제", 2500);
+    // 권한이 있고 원하면 여기서 Notification도 띄울 수 있음
+  });
+
+  $dark.addEventListener("change", () => {
+    localStorage.setItem(KEY_DARK, $dark.checked ? "1" : "0");
+    applyDark($dark.checked);
+  });
+
+  document.getElementById("btnPerm").addEventListener("click", async () => {
+    if (!("Notification" in window)) {
+      showToast("슈고알리미", "이 브라우저는 Notification을 지원하지 않습니다.", 2500);
+      return;
+    }
+    const p = await Notification.requestPermission();
+    showToast("슈고알리미", `알림 권한: ${p}`, 2500);
+  });
+
+  document.getElementById("btnTest").addEventListener("click", () => {
+    fireRegular(new Date());
+  });
+
+  function applyDark(on) {
+    document.body.classList.toggle("dark", !!on);
+  }
+
+  function pad2(n){ return String(n).padStart(2, "0"); }
+  function ymdhms(d){
+    return d.getFullYear()
+      + pad2(d.getMonth()+1)
+      + pad2(d.getDate())
+      + pad2(d.getHours())
+      + pad2(d.getMinutes())
+      + pad2(d.getSeconds());
+  }
+  function ymdhm(d){
+    return d.getFullYear()
+      + pad2(d.getMonth()+1)
+      + pad2(d.getDate())
+      + pad2(d.getHours())
+      + pad2(d.getMinutes());
+  }
+
+  // 1초 체크
+  setInterval(() => {
+    if (!$enabled.checked) return;
+
+    const now = new Date();
+
+    const isEndAlert =
+      (now.getMinutes() === 21 && now.getSeconds() === 20) ||
+      (now.getMinutes() === 50 && now.getSeconds() === 0);
+
+    const isRegular =
+      (now.getMinutes() === 15 && now.getSeconds() === 0) ||
+      (now.getMinutes() === 45 && now.getSeconds() === 0);
+
+    if (!isEndAlert && !isRegular) return;
+
+    const key = isEndAlert
+      ? (ymdhms(now) + "_END")
+      : (ymdhm(now) + "_REG"); // 정시 15:00/45:00만 쓰면 분키로 충분
+
+    const last = localStorage.getItem(KEY_LAST) || "";
+    if (key === last) return;
+    localStorage.setItem(KEY_LAST, key);
+
+    if (isEndAlert) fireEndAlert(now);
+    else fireRegular(now);
+
+  }, 1000);
+
+  function fireEndAlert(now) {
+    // ? 종료알림: 60초 유지(페이지 토스트로 보장)
+    showToast("슈고알리미", "종료알림", 60000);
+    // 브라우저 알림(권한 있으면)
+    showNotification("슈고알리미", "종료알림");
+  }
+
+  function fireRegular(now) {
+    // 기존처럼 minute 기반 타이틀을 쓰고 싶으면:
+    const mm = now.getMinutes();
+    showToast(`슈고알리미(${mm}분)`, "알림", 8000);
+    showNotification(`슈고알리미(${mm}분)`, "알림");
+  }
+
+  function showNotification(title, body) {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+
+    try {
+      new Notification(title, { body });
+    } catch (e) {
+      // 일부 브라우저는 사용자 제스처 없으면 막기도 함
+    }
+  }
+
+  function showToast(title, msg, lifeMs) {
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = `
+      <div class="title">${escapeHtml(title)}</div>
+      <div class="msg">${escapeHtml(msg)}</div>
+    `;
+    el.addEventListener("click", () => el.remove());
+
+    $toastWrap.prepend(el);
+
+    const t = setTimeout(() => {
+      el.remove();
+    }, Math.max(500, lifeMs || 2500));
+
+    // 제거되면 타이머도 정리
+    const obs = new MutationObserver(() => {
+      if (!document.body.contains(el)) {
+        clearTimeout(t);
+        obs.disconnect();
+      }
+    });
+    obs.observe(document.body, { childList:true, subtree:true });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[m]));
+  }
+})();
+</script>
+</body>
+</html>
